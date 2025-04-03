@@ -1,0 +1,68 @@
+---
+compiled_package_info:
+  package_name: movemaker
+  address_alias_instantiation:
+    Extensions: "0000000000000000000000000000000000000000000000000000000000000001"
+    admin: 296e53ce1956ebdef5d969f3189a00b0ca29f2d377b311e30872202d4072b19b
+    aptos_framework: "0000000000000000000000000000000000000000000000000000000000000001"
+    aptos_fungible_asset: 000000000000000000000000000000000000000000000000000000000000000a
+    aptos_std: "0000000000000000000000000000000000000000000000000000000000000001"
+    aptos_token: "0000000000000000000000000000000000000000000000000000000000000003"
+    core_resources: 000000000000000000000000000000000000000000000000000000000a550c18
+    deployer: b31e712b26fd295357355f6845e77c888298636609e93bc9b05f0f604049f434
+    pyth: 7e783b349d3e89cf5931af376ebeadbfab855b3fa239b7ada8f5a92fbea6b387
+    std: "0000000000000000000000000000000000000000000000000000000000000001"
+    triplex: 4e984df057694cb227d70325a3ba260a4bbcba451b28274a00d95a29648c1a94
+    vm: "0000000000000000000000000000000000000000000000000000000000000000"
+    vm_reserved: "0000000000000000000000000000000000000000000000000000000000000000"
+    wormhole: 5bc11445584a763c1fa7ed39081f1b920954da14e04b32440cba863d03e19625
+  source_digest: FBF6A01ADF9BE7E33DD65043082CC7B3D2D862B625EF1F57AD9C7A06CAD77814
+  build_flags:
+    dev_mode: false
+    test_mode: false
+    override_std: ~
+    generate_docs: false
+    generate_abis: false
+    generate_move_model: true
+    full_model_generation: true
+    install_dir: ~
+    force_recompilation: false
+    additional_named_addresses: {}
+    fetch_deps_only: false
+    skip_fetch_latest_git_deps: false
+    compiler_config:
+      bytecode_version: 7
+      known_attributes:
+        - bytecode_instruction
+        - deprecated
+        - event
+        - expected_failure
+        - "fmt::skip"
+        - legacy_entry_fun
+        - "lint::allow_unsafe_randomness"
+        - "lint::skip"
+        - module_lock
+        - "mutation::skip"
+        - native_interface
+        - persistent
+        - randomness
+        - resource_group
+        - resource_group_member
+        - test
+        - test_only
+        - verify_only
+        - view
+      skip_attribute_checks: false
+      compiler_version: V2_0
+      language_version: V2_1
+      experiments:
+        - optimize=on
+dependencies:
+  - AptosFramework
+  - AptosStdlib
+  - AptosToken
+  - Deployer
+  - MoveStdlib
+  - Pyth
+  - Wormhole
+bytecode_deps: []

@@ -4,8 +4,8 @@ version = "1.0.0"
 authors = []
 
 [addresses]
-triplex="0x123"
-admin ="0x123"
+triplex="0x4e984df057694cb227d70325a3ba260a4bbcba451b28274a00d95a29648c1a94"
+admin ="0x296e53ce1956ebdef5d969f3189a00b0ca29f2d377b311e30872202d4072b19b"
 
 pyth = "0x7e783b349d3e89cf5931af376ebeadbfab855b3fa239b7ada8f5a92fbea6b387"
 deployer = "0xb31e712b26fd295357355f6845e77c888298636609e93bc9b05f0f604049f434"
@@ -20,5 +20,5 @@ subdir = "aptos-framework"
 
 [dependencies]
 Pyth = { git = "https://github.com/yue1823/pyth-crosschain.git", subdir = "target_chains/aptos/contracts", rev = "main" }
-
+#Pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/aptos/contracts", rev = "main" }
 [dev-dependencies]
