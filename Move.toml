@@ -4,7 +4,7 @@ version = "1.0.0"
 authors = ["yue"]
 
 [addresses]
-triplex="_"
+triplex="0xc611b49c5b815397b13527d5b39c08c34f3a79ce17f055c7ff8d50ac52b23667"
 admin ="0x296e53ce1956ebdef5d969f3189a00b0ca29f2d377b311e30872202d4072b19b"
 
 pyth = "0x7e783b349d3e89cf5931af376ebeadbfab855b3fa239b7ada8f5a92fbea6b387"
