@@ -1,10 +1,10 @@
 [package]
 name = "movemaker"
 version = "1.0.0"
-authors = []
+authors = ["yue"]
 
 [addresses]
-triplex="0x4e984df057694cb227d70325a3ba260a4bbcba451b28274a00d95a29648c1a94"
+triplex="0xea1b7b3507181cd3b4b55d36ff1ababa4b42f3bf939da340ba054c82e90fb39b"
 admin ="0x296e53ce1956ebdef5d969f3189a00b0ca29f2d377b311e30872202d4072b19b"
 
 pyth = "0x7e783b349d3e89cf5931af376ebeadbfab855b3fa239b7ada8f5a92fbea6b387"

@@ -6,8 +6,15 @@ module triplex::vault {
     use std::signer::address_of;
     use std::string;
     use std::string::{utf8, String};
+    use std::vector::find;
+    use aptos_std::math64;
+    use aptos_std::math64::pow;
     use aptos_std::smart_table;
     use aptos_std::smart_table::SmartTable;
+    use aptos_framework::aptos_coin::AptosCoin;
+    use aptos_framework::coin;
+
+    use aptos_framework::event::emit;
     use aptos_framework::fungible_asset;
     use aptos_framework::fungible_asset::{Metadata, MintRef, BurnRef, TransferRef, generate_mint_ref, FungibleStore,
         FungibleAsset, create_store
@@ -18,8 +25,22 @@ module triplex::vault {
     };
     use aptos_framework::primary_fungible_store;
     use aptos_framework::primary_fungible_store::create_primary_store_enabled_fungible_asset;
+    use triplex::utiles::{ get_collateral_total_amount};
+    use triplex::pyth_feed::get_feed_id;
+    use pyth::pyth;
+    use pyth::price;
+    use pyth::i64;
+    use pyth::price_identifier;
 
     use triplex::package_manager::{get_signer, get_control_address};
+    #[test_only]
+    use aptos_std::debug;
+    #[test_only]
+    use aptos_std::string_utils;
+    #[test_only]
+    use triplex::package_manager;
+    #[test_only]
+    use triplex::swap::{deploy, print_apt_balance};
 
     friend triplex::move_maker;
     friend triplex::dao;
@@ -38,7 +59,37 @@ module triplex::vault {
         store:Object<FungibleStore>
     }
 
-
+    #[event]
+    struct Add_collateral has copy,store,drop{
+        user:address,
+        user_collateral_total_amount:u64,   //all type asset value
+        add_collateral_type:String,
+        add_collateral_amount:u64
+    }
+    #[event]
+    struct Loan has copy,store,drop{
+        user:address,
+        user_collateral_total_amount:u64,
+        collateral_type:String,
+        collateral_amount:u64,
+        loan_tpxusd_amount:u64
+    }
+    #[event]
+    struct Withdraw_collateral has copy,store,drop{
+        user:address,
+        user_collateral_total_amount:u64,
+        withdraw_collateral_type:String,
+        withdraw_collateral_amount:u64,
+        original_collateral_amount:u64
+    }
+    #[event]
+    struct Pay_Loan has copy,store,drop{
+        user:address,
+        user_collateral_total_amount:u64,
+        collateral_type:String,
+        collateral_amount:u64,
+        loan_tpxusd_amount:u64
+    }
 
 
     struct Control_ref has key,store{
@@ -74,6 +125,17 @@ module triplex::vault {
         mint_ref: MintRef,
         /// Burn capability for share tokens
         burn_ref: BurnRef,
+
+        user:SmartTable<address,User>
+    }
+    struct User has key,store{
+        pledge_asset:vector<Pledge>,
+    }
+    struct Pledge has key,store{
+        name:String,
+        pledge_asset:Object<Metadata>,
+        pledge_asset_amount:u64,
+        usd_loan_amount:u64
     }
 
     public fun get_fungible_store_of_tpxusdt(caller:&signer):Object<FungibleStore> acquires Table_of_Vault {
@@ -129,6 +191,7 @@ module triplex::vault {
             extend_ref,
             mint_ref,
             burn_ref,
+            user:smart_table::new()
         };
 
         move_to(&object::generate_signer(&constructor_ref), vault_config);
@@ -141,10 +204,101 @@ module triplex::vault {
 
     }
 
-    public entry fun  pledge_to_get_tpxusd_FA(caller:&signer,in_asset:Object<Metadata>) acquires Table_of_Vault, Vault {
+    fun ensure_user_on_vault(caller:&signer,in_asset:Object<Metadata>) acquires Table_of_Vault, Vault {
         let borrow = borrow_global_mut<Table_of_Vault>(create_object_address(&get_control_address(),TPX_SEED));
         assert!(borrow.accept_asset.contains(in_asset)==true ,not_implemented(E_not_support_asset));
+        let object_vault =  borrow_global_mut<Vault>(object_address(borrow.accept_asset.borrow(in_asset)));
+        let exists = object_vault.user.contains(address_of(caller));
+        if(!exists){
+            let new_user = User{
+                pledge_asset:vector[]
+            };
+            object_vault.user.add(address_of(caller),new_user);
+        }
+    }
+    fun search(in:&Pledge,name:Object<Metadata>):bool{
+        in.pledge_asset == name
+    }
+    fun change_user_on_vault(caller:&signer,in_amount:u64,loan_amount:u64,pledge_asset:Object<Metadata>) acquires Vault, Table_of_Vault {
+        let borrow = borrow_global_mut<Table_of_Vault>(create_object_address(&get_control_address(),TPX_SEED));
+        assert!(borrow.accept_asset.contains(pledge_asset)==true ,not_implemented(E_not_support_asset));
+        let object_vault =  borrow_global_mut<Vault>(object_address(borrow.accept_asset.borrow(pledge_asset)));
+        let user = object_vault.user.borrow_mut(address_of(caller));
+        let (exisits ,index ) = find(&user.pledge_asset,|t| search(t,pledge_asset) );
+        if(exisits){
+            user.pledge_asset[index].pledge_asset_amount += in_amount;
+            user.pledge_asset[index].usd_loan_amount += loan_amount;
+        }else{
+            let new_pledge = Pledge{
+                name:fungible_asset::symbol(pledge_asset),
+                pledge_asset,
+                pledge_asset_amount:in_amount,
+                usd_loan_amount:loan_amount
+            };
+            user.pledge_asset.push_back(new_pledge);
+        };
+    }
+    fun deposite_in_fa(caller:&signer,in_asset:Object<Metadata>,in_amount:u64) acquires Vault, Table_of_Vault {
+        let borrow = borrow_global<Table_of_Vault>(create_object_address(&get_control_address(),TPX_SEED));
+        assert!(borrow.accept_asset.contains(in_asset)==true ,not_implemented(E_not_support_asset));
         let object_vault =  borrow_global<Vault>(object_address(borrow.accept_asset.borrow(in_asset)));
+        let in_fa  = primary_fungible_store::withdraw(caller,in_asset,in_amount);
+        fungible_asset::deposit(object_vault.asset_store,in_fa);
+    }
+
+    public entry fun  pledge_to_get_tpxusd_FA(caller:&signer,in_asset:Object<Metadata>,in_amount:u64,loan_amount:u64,pyth_price_update: vector<vector<u8>>) acquires Table_of_Vault, Vault {
+        ensure_user_on_vault(caller,in_asset);
+
+
+
+        let pyth_fee=pyth::get_update_fee(&pyth_price_update);
+        let coins = coin::withdraw<AptosCoin>(caller,pyth_fee);
+        pyth::update_price_feeds(pyth_price_update,coins);
+        deposite_in_fa(caller,in_asset,in_amount);
+
+
+
+
+        let coin_price_identifier =  get_feed_id(in_asset);
+        let coin_usd_price_id = price_identifier::from_byte_vec(coin_price_identifier);
+
+        let price =pyth::get_price(coin_usd_price_id);
+
+        let price_positive = i64::get_magnitude_if_positive(&price::get_price(&price)); // This will fail if the price is negative
+        let expo_magnitude = i64::get_magnitude_if_negative(&price::get_expo(&price)); // This will fail if the exponent is positive
+
+        let decimals = fungible_asset::decimals(in_asset);
+        let octas = pow(10, (decimals as u64));
+
+
+        let price_in_aptos_coin =  (octas * pow(10, expo_magnitude)) / price_positive;
+
+        let out_amount = if(loan_amount != 0){
+            math64::mul_div(price_in_aptos_coin,loan_amount,100000)
+        }else{
+            loan_amount
+        };
+
+        change_user_on_vault(caller,in_amount,out_amount,in_asset);
+
+
+        let loan_fa = pledge_to_get_tpxusd(out_amount);
+
+        primary_fungible_store::deposit(address_of(caller),loan_fa);
+
+        emit(Add_collateral{
+            user:address_of(caller),
+            user_collateral_total_amount:get_collateral_total_amount(caller),
+            add_collateral_type:fungible_asset::symbol(in_asset),
+            add_collateral_amount:in_amount,
+        });
+        emit(Loan{
+            user:address_of(caller),
+            user_collateral_total_amount:get_collateral_total_amount(caller),
+            collateral_type:fungible_asset::symbol(in_asset),
+            collateral_amount:in_amount,
+            loan_tpxusd_amount:out_amount,
+        });
 
 
     }
@@ -161,6 +315,13 @@ module triplex::vault {
         borrow.accept_asset.add(pledge_asset,new_vault);
     }
 
+
+    public entry fun directly_add_vault(caller:&signer,in:Object<Metadata>) acquires VaultState {
+        assert!(address_of(caller) == @admin || address_of(caller) == @triplex,not_implemented(E_not_admin));
+        let name = fungible_asset::name(in);
+        let symbol=fungible_asset::symbol(in);
+        let new_vault = create_vault(caller,in,name,symbol,8);
+    }
 
     public entry fun initlize(caller:&signer){
        // assert!(address_of(caller)==@admin,not_implemented(E_not_admin));
@@ -180,6 +341,12 @@ module triplex::vault {
         move_to(&generate_signer(conf),new);
         move_to(&generate_signer(conf),BIG_pool{
             store:create_store( &create_object(address_of(caller)),object_from_constructor_ref<Metadata>(conf))
+        });
+
+    }
+    fun init_module(caller:&signer){
+        move_to(caller,VaultState{
+            sequence_number:0
         })
     }
 
@@ -190,8 +357,43 @@ module triplex::vault {
 
 
     #[test_only]
+    public fun print_user_data (caller:&signer,pledge_asset:Object<Metadata>) acquires Table_of_Vault, Vault {
+        let borrow = borrow_global<Table_of_Vault>(create_object_address(&get_control_address(),TPX_SEED));
+        assert!(borrow.accept_asset.contains(pledge_asset)==true ,not_implemented(E_not_support_asset));
+        let object_vault =  borrow_global<Vault>(object_address(borrow.accept_asset.borrow(pledge_asset)));
+        let user = object_vault.user.borrow(address_of(caller));
+        // debug::print(&string_utils::format1(&b"User = {}",user.));
+        debug::print( user);
+    }
+    #[test_only]
     public fun call_vault_init(caller:&signer){
         initlize(caller);
     }
+    #[test_only]
+    public fun print_usd_balance(caller:&signer) acquires Table_of_Vault {
+        let meta =get_tpxusd_metadata();
+        let b= primary_fungible_store::balance(address_of(caller),meta);
+        debug::print(&string_utils::format1(&b"Balance of tpxusd = {}",b/100000000));
+    }
+
+    #[test(caller=@triplex)]
+    fun test_vault(caller:&signer) acquires VaultState, Table_of_Vault, Vault {
+        ready_everything(caller);
+        let (apt_obj,_)=deploy(address_of(caller));
+        directly_add_vault(caller,apt_obj);
+        // pledge_to_get_tpxusd_FA(caller,apt_obj,100000000000,10000000000,);
+
+
+        print_apt_balance(caller,apt_obj);
+        print_usd_balance(caller);
+        print_user_data(caller,apt_obj);
+    }
+    #[test_only]
+    fun ready_everything(caller:&signer){
+        package_manager::call_package_init(caller);
+        initlize(caller);
+        init_module(caller);
+    }
+
 
 }

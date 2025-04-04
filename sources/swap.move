@@ -15,7 +15,7 @@ module triplex::swap {
     use aptos_framework::event::emit;
     use aptos_framework::fungible_asset;
     use aptos_framework::fungible_asset::{FungibleStore, MintRef, BurnRef, TransferRef, Metadata, symbol, create_store,
-        generate_mint_ref, generate_burn_ref, FungibleAsset
+        generate_mint_ref, generate_burn_ref, FungibleAsset, amount, metadata_from_asset
     };
     use aptos_framework::object;
     use aptos_framework::object::{Object, ExtendRef, create_named_object, generate_extend_ref, generate_signer,
@@ -73,10 +73,10 @@ module triplex::swap {
     #[event]
     struct Add_LP has copy,store ,drop {}
     public entry fun swap(caller:&signer,in:Object<Metadata>,out:Object<Metadata>,in_amount:u64,out_min:u64) acquires Pool_tree, Pool {
-        let is_sort = is_sorted(in,out);
-        if(!is_sort){
-            return swap(caller,out,in,in_amount,out_min)
-        };
+        //let is_sort = is_sorted(in,out);
+        // if(!is_sort){
+        //     return swap(caller,out,in,in_amount,out_min)
+        // };
         let (coin_1_balance ,coin_2_balance)=get_pool_balance(in,out);
 
         let pool_seed= get_pool_seed(in,out);
@@ -122,7 +122,6 @@ module triplex::swap {
         emit(Swap_event{});
     }
     #[view]
-
     public fun get_amount_out(
         reserve_1:u64,
         reserve_2:u64,
@@ -170,7 +169,7 @@ module triplex::swap {
         //debug::print(&string_utils::format1(&b"pool obj = {}",&object::object_address( &pool_address)));
         // debug::print(&object::object_address( &pool_address));
         // debug::print(&*lp_name.bytes());
-        let lp_store =primary_fungible_store::primary_store(create_object_address(&address_of(pool_signer),*lp_name.bytes()),  pool_address);
+        // let lp_store =primary_fungible_store::primary_store(create_object_address(&address_of(pool_signer),*lp_name.bytes()),  pool_address);
         // let lp_store =  if(primary_fungible_store::primary_store_exists(
         //     object::object_address( &pool_address),  pool_address
         // )){
@@ -200,12 +199,13 @@ module triplex::swap {
         // Before depositing the added liquidity, compute the amount of LP tokens the LP will receive.
         let reserve_1 = fungible_asset::balance(store_1);
         let reserve_2 = fungible_asset::balance(store_2);
-        let lp_token_supply = option::destroy_some(fungible_asset::supply( pool_address));
+        // let lp_token_supply = option::destroy_some(fungible_asset::supply( pool_address));
+        let lp_token_supply = 0;
         let mint_ref = &pool_data.LP_ref.Mint_ref;
         let liquidity_token_amount = if (lp_token_supply == 0) {
             let total_liquidity = (math128::sqrt((amount_1 as u128) * (amount_2 as u128)) as u64);
             // Permanently lock the first MINIMUM_LIQUIDITY tokens.
-            fungible_asset::mint_to(mint_ref,  pool_address, 1000);
+            primary_fungible_store::mint(mint_ref, object::object_address(&pool_address) , 1000);
             total_liquidity - 1000
         } else {
             // Only the smaller amount between the token 1 or token 2 is considered. Users should make sure to either
@@ -217,6 +217,9 @@ module triplex::swap {
         assert!(liquidity_token_amount > 0, EINSUFFICIENT_LIQUIDITY_MINTED);
 
         // Deposit the received liquidity into the pool.
+        // debug::print(&string_utils::format2(&b"deposite 1 = {} , {}",metadata_from_asset(&fungible_asset_1),fungible_asset::store_metadata(store_1)));
+        // debug::print(&string_utils::format2(&b"deposite 2 = {} , {}",metadata_from_asset(&fungible_asset_2),fungible_asset::store_metadata(store_2)));
+
         fungible_asset::deposit(store_1, fungible_asset_1);
         fungible_asset::deposit(store_2, fungible_asset_2);
 
@@ -227,7 +230,8 @@ module triplex::swap {
 
         // Mint the corresponding amount of LP tokens to the LP.
         let lp_tokens = fungible_asset::mint(mint_ref, liquidity_token_amount);
-        fungible_asset::deposit_with_ref(&pool_data.LP_ref.Tran_ref, lp_store, lp_tokens);
+        // fungible_asset::deposit_with_ref(&pool_data.LP_ref.Tran_ref, lp_store, lp_tokens);
+        primary_fungible_store::deposit(address_of(lp),lp_tokens)
     }
 
     fun ensure_lp_token_store<T: key>(lp: address, pool: Object<T>): Object<FungibleStore> acquires Pool {
@@ -240,46 +244,7 @@ module triplex::swap {
         };
         store
     }
-    public entry fun add_lp (caller:&signer,in:Object<Metadata>,out:Object<Metadata>,in_amount:u64,out_amount:u64) acquires Pool_tree, Pool {
 
-
-        let is_sort = is_sorted(in,out);
-        if(!is_sort){
-            return add_lp(caller,out,in,out_amount,in_amount)
-        };
-        let coin1 = primary_fungible_store::withdraw(caller,in,in_amount);
-        let coin2 =  primary_fungible_store::withdraw(caller,out,out_amount);
-
-        let fa1 = fungible_asset::metadata_from_asset(&coin1);
-        let fa2= fungible_asset::metadata_from_asset(&coin2);
-
-        let pool_seed= get_pool_seed(fa1,fa2);
-        let borrow = borrow_global_mut<Pool_tree>(get_pool_tree_address());
-        assert!(borrow.pool_table.contains(pool_seed)==true,not_implemented( E_pool_already_exists));
-
-        let obj_pool = *borrow.pool_table.borrow(pool_seed);
-
-        //debug::print(&string_utils::format1(&b"swap obj pool = {}",obj_pool));
-
-        let token_1_balance = fungible_asset::amount(&coin1);
-        let token_2_balance =fungible_asset::amount(&coin2);
-
-        let borrow =  borrow_global_mut<Pool>(object_address(borrow.pool_table.borrow(pool_seed)));
-        let pool_signer = &generate_signer_for_extending(&borrow.extend);
-        if(fungible_asset::store_metadata(borrow.coin_1) == fungible_asset::metadata_from_asset(&coin1)){
-            fungible_asset::deposit(borrow.coin_1 ,coin1);
-            fungible_asset::deposit(borrow.coin_2,coin2);
-        }else{
-            fungible_asset::deposit(borrow.coin_1 ,coin2);
-            fungible_asset::deposit(borrow.coin_2,coin1);
-        };
-        //mint(caller, coin1,coin2,obj_pool,pool_signer,borrow);
-        borrow.init_1 += token_1_balance ;
-        borrow.init_2 += token_2_balance ;
-        // borrow.init_price = ((token_2_balance*10000)/token_1_balance)/10000;
-
-        emit(Add_LP{})
-    }
 
     #[view]
     public fun is_sorted(token_1: Object<Metadata>, token_2: Object<Metadata>): bool {
@@ -308,8 +273,53 @@ module triplex::swap {
         let conf = &create_named_object(caller,*symbol.bytes());
         create_store(conf,in)
     }
+    public entry fun add_lp (caller:&signer,in:Object<Metadata>,out:Object<Metadata>,in_amount:u64,out_amount:u64) acquires Pool_tree, Pool {
+
+
+    let is_sort = is_sorted(in,out);
+    if(!is_sort){
+        return add_lp(caller,out,in,out_amount,in_amount)
+    };
+    let coin1 = primary_fungible_store::withdraw(caller,in,in_amount);
+    let coin2 =  primary_fungible_store::withdraw(caller,out,out_amount);
+
+    let fa1 = fungible_asset::metadata_from_asset(&coin1);
+    let fa2= fungible_asset::metadata_from_asset(&coin2);
+
+    let pool_seed= get_pool_seed(fa1,fa2);
+    let borrow = borrow_global_mut<Pool_tree>(get_pool_tree_address());
+    assert!(borrow.pool_table.contains(pool_seed)==true,not_implemented( E_pool_already_exists));
+
+    let obj_pool = *borrow.pool_table.borrow(pool_seed);
+
+    //debug::print(&string_utils::format1(&b"swap obj pool = {}",obj_pool));
+
+    let token_1_balance = fungible_asset::amount(&coin1);
+    let token_2_balance =fungible_asset::amount(&coin2);
+
+    let borrow =  borrow_global_mut<Pool>(object_address(borrow.pool_table.borrow(pool_seed)));
+    let pool_signer = &generate_signer_for_extending(&borrow.extend);
+    // if(fungible_asset::store_metadata(borrow.coin_1) == fungible_asset::metadata_from_asset(&coin1)){
+    //     fungible_asset::deposit(borrow.coin_1 ,coin1);
+    //     fungible_asset::deposit(borrow.coin_2,coin2);
+    // }else{
+    //     fungible_asset::deposit(borrow.coin_1 ,coin2);
+    //     fungible_asset::deposit(borrow.coin_2,coin1);
+    // };
+    mint(caller, coin1,coin2,obj_pool,pool_signer,borrow);
+    borrow.init_1 += token_1_balance ;
+    borrow.init_2 += token_2_balance ;
+    // borrow.init_price = ((token_2_balance*10000)/token_1_balance)/10000;
+
+    emit(Add_LP{})
+    }
 
      public entry fun add_pool(caller:&signer,pair_1:Object<Metadata>,pair_2:Object<Metadata>) acquires Pool_tree {
+
+         let is_sort = is_sorted(pair_1,pair_2);
+         if(!is_sort){
+             return add_pool(caller,pair_2,pair_1)
+         };
 
         let pool_seed= get_pool_seed(pair_1,pair_2);
         let borrow = borrow_global_mut<Pool_tree>(get_pool_tree_address());
@@ -330,7 +340,7 @@ module triplex::swap {
          lp_name.append(fungible_asset::name(pair_1));
          lp_name.append(fungible_asset::name(pair_2));
          lp_name.append(utf8(b"_LP"));
-         debug::print(&*lp_name.bytes());
+         //debug::print(&*lp_name.bytes());
         let lp_symbol = utf8(b"");
         lp_symbol.append(fungible_asset::symbol(pair_1));
         lp_symbol.append(utf8(b"-"));
@@ -387,6 +397,16 @@ module triplex::swap {
             pool_table:smart_table::new()
         });
     }
+    #[view]
+    public fun get_LP_metadata(pool_1:Object<Metadata>,pool_2:Object<Metadata>):Object<Metadata> acquires Pool_tree, Pool {
+        let pool_seed= get_pool_seed(pool_1,pool_2);
+        let borrow = borrow_global<Pool_tree>(get_pool_tree_address());
+        assert!(borrow.pool_table.contains(pool_seed)==true,not_implemented( E_pool_already_exists));
+        let pool_obj=borrow.pool_table.borrow( pool_seed);
+        let pool = borrow_global<Pool>(object_address(pool_obj));
+        let obj =object::address_to_object<Metadata>(object::address_from_extend_ref(&pool.LP_ref.extend_ref));
+        obj
+    }
 
 
     #[test(caller=@triplex,user=@0x1234)]
@@ -412,10 +432,20 @@ module triplex::swap {
 
     }
     #[test(caller=@triplex,user=@0x1234)]
-    fun test_add_pool (caller:&signer,user:&signer) {
+    fun test_add_pool (caller:&signer,user:&signer) acquires Pool_tree {
+        ready_everythin(caller,user);
+        let(apt_obj,gold_obj )=deploy(address_of(caller));
+        add_pool(caller,apt_obj,gold_obj);
+    }
+    #[test(caller=@triplex,user=@0x1234)]
+    fun test_add_lp (caller:&signer,user:&signer) {
         // ready_everythin(caller,user);
         // let(apt_obj,gold_obj )=deploy(address_of(caller));
         // add_pool(caller,apt_obj,gold_obj);
+        // add_lp(caller,apt_obj,gold_obj,200000000000,200000000000);
+        //
+        // let lp_meta = get_LP_metadata(apt_obj,gold_obj);
+        // debug::print(&string_utils::format1(&b"Balance of LP = {}",primary_fungible_store::balance(address_of(caller),lp_meta)));
     }
 
     #[test_inly]
