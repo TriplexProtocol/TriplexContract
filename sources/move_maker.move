@@ -3,6 +3,7 @@ module triplex::move_maker {
     use std::error::not_implemented;
     use std::option::{Option, none, };
     use std::signer::address_of;
+    use std::string;
 
     use std::string::{String, utf8};
     use std::vector;
@@ -22,13 +23,18 @@ module triplex::move_maker {
     use aptos_framework::fungible_asset::{FungibleStore, Metadata, MintRef, BurnRef, TransferRef, FungibleAsset,
         generate_burn_ref, generate_mint_ref, create_store, deposit
     };
+    use aptos_framework::object;
 
     use aptos_framework::object::{Object, create_object_address, ExtendRef, generate_signer_for_extending,
-        create_named_object, generate_signer, generate_extend_ref, generate_transfer_ref, object_from_constructor_ref
+        create_named_object, generate_signer, generate_extend_ref, generate_transfer_ref, object_from_constructor_ref,
+        object_address, ConstructorRef, address_from_constructor_ref
     };
     use aptos_framework::primary_fungible_store;
+    use triplex::Big_pool::deposite_to_big_pool;
+    use triplex::pyth_feed;
+    use triplex::pyth_feed::get_feed_id;
     use pyth::price::Price;
-    use triplex::vault::{get_fungible_store_of_tpxusdt, pledge_to_get_tpxusd, deposite_to_big_pool};
+    use triplex::vault::{get_fungible_store_of_tpxusdt, pledge_to_get_tpxusd, create_vault, a };
     use triplex::package_manager::{get_signer, get_control_address};
     use pyth::price;
     use pyth::i64;
@@ -36,6 +42,8 @@ module triplex::move_maker {
     use aptos_framework::account::create_account_for_test;
     #[test_only]
     use triplex::package_manager;
+    #[test_only]
+    use triplex::pyth_feed::call_pyth;
     #[test_only]
     use triplex::swap::deploy;
     #[test_only]
@@ -95,6 +103,8 @@ module triplex::move_maker {
     const E_without_extend_ref :u64 =3;
     // RWA asset already exists
     const E_already_exist :u64 =4 ;
+    //not admin
+    const E_not_admin:u64 =5;
 
     // #[view]
     // fun get_number(in_obj:Object<Metadata>,out_obj:Object<Metadata>,in_amount:u64,out_amount:u64):(u64,u64,u64,u64,u64,u64,u64,u64,u64,u64) acquires ALL, Pool {
@@ -141,16 +151,16 @@ module triplex::move_maker {
     }
 
     //CoFA
-    public entry fun create_asset_COFA<CoinA>(caller:&signer,amount:u64,pyth_price_update: vector<vector<u8>>,price_feed:vector<u8>) acquires ALL, Pool {
+    public entry fun create_asset_COFA<CoinA>(caller:&signer,amount:u64,pyth_price_update: vector<vector<u8>>,asset_name:String) acquires ALL, Pool {
         let coin = coin::withdraw<CoinA>(caller,amount);
         let fa=  coin_to_fungible_asset(coin);
-        return create_asset(caller,fa,pyth_price_update,price_feed)
+        return create_asset(caller,fa,pyth_price_update,asset_name)
     }
 
     //FAFA
-    public entry fun create_asset_FAFA(caller:&signer,amount:u64,in_asset:Object<Metadata>,pyth_price_update: vector<vector<u8>>,price_feed:vector<u8>) acquires ALL, Pool {
+    public entry fun create_asset_FAFA(caller:&signer,amount:u64,in_asset:Object<Metadata>,pyth_price_update: vector<vector<u8>>,asset_name:String) acquires ALL, Pool {
         let in_fa = primary_fungible_store::withdraw(caller,in_asset,amount);
-        return create_asset(caller,in_fa,pyth_price_update,price_feed)
+        return create_asset(caller,in_fa,pyth_price_update,asset_name)
     }
 
     public entry fun demo_example(caller:&signer,amount:u64,in_asset:Object<Metadata>,name:String,symbol:String,icon:String){
@@ -164,13 +174,15 @@ module triplex::move_maker {
     }
 
     //RWA
-    fun create_asset(caller:&signer,in_FA:FungibleAsset,pyth_price_update: vector<vector<u8>>,price_feed:vector<u8>) acquires ALL, Pool {
+    fun create_asset(caller:&signer,in_FA:FungibleAsset,pyth_price_update: vector<vector<u8>>,asset_name:String) acquires ALL, Pool {
         let borrow = borrow_global<ALL>(create_object_address(&@triplex,SEED));
         let in_FA_meta = fungible_asset::metadata_from_asset(&in_FA);
         assert!(borrow.pool_tree.contains(in_FA_meta) == true , not_implemented(E_not_extist));
         let pool_address=borrow.pool_tree.borrow(in_FA_meta);
         let pool = borrow_global<Pool>(*pool_address);
 
+
+        let price_feed = pyth_feed::get_rwa_feed_id(asset_name);
 
         let pyth_fee=pyth::get_update_fee(&pyth_price_update);
         let coins = withdraw(caller,pyth_fee);
@@ -219,38 +231,50 @@ module triplex::move_maker {
     }
 
 
-    public(friend) fun dao_add_mortgage_assset(in_meta:Object<Metadata>,price_feed:vector<u8>) acquires ALL {
-        let borrow = borrow_global_mut<ALL>(create_object_address(&@triplex,SEED));
-        let control_signer = & get_signer();
-        let obj_seed = *fungible_asset::symbol(in_meta).bytes();
+    public entry  fun dao_add_mortgage_assset(pool_signer:&signer,in_meta:Object<Metadata>,f_store:Object<FungibleStore>) acquires ALL {
+        //assert!(address_of(caller)== @admin,not_implemented(E_not_admin));
+        let borrow = borrow_global_mut<ALL>(create_object_address(&get_control_address(),SEED));
+        let control_signer = &get_signer();
+        let price_feed_id =get_feed_id(in_meta);
+
         if(!borrow.pool_tree.contains(in_meta)) {
-            let conf = &create_named_object(control_signer, obj_seed);
+
             let new_pool = Pool {
-                pool: create_store(conf, in_meta),
-                feed_price:price_feed,
+                pool: f_store,
+                feed_price:price_feed_id,
                 supoort_asset: smart_table::new(),
                 all_v:vector[]
             };
-            let pool_signer = &generate_signer(conf);
+            //let pool_signer = &generate_signer( conf);
             move_to(pool_signer,new_pool);
-            borrow.pool_tree.add(in_meta,create_object_address(&address_of(control_signer), obj_seed));
-        }
-    }
+            borrow.pool_tree.add(in_meta,address_of(pool_signer));
+        };
 
-    public(friend) fun dao_add_rwa_asset(in_meta:Object<Metadata>,name:String,symbol:String,icon_url:String,price_feed_addrss:vector<u8>) acquires ALL, Pool {
+
+    }
+    // public entry fun directly_add_vault(caller:&signer,in:Object<Metadata>) {
+    //     assert!(address_of(caller) == @admin || address_of(caller) == @triplex,not_implemented(E_not_admin));
+    //
+    //
+    // }
+
+    public(friend) fun dao_add_rwa_asset(in_meta:Object<Metadata>,asset_name:String) acquires ALL, Pool {
         let borrow = borrow_global_mut<ALL>(create_object_address(&@triplex,SEED));
         assert!(borrow.pool_tree.contains(in_meta)== true , not_implemented(E_not_extist));
         let market_address = *borrow.pool_tree.borrow(in_meta);
         let borrow_pool = borrow_global_mut<Pool>(market_address);
 
-       let new_seed  = utf8(b"");
+        let price_feed_addrss = pyth_feed::get_rwa_feed_id(asset_name);
+        let icon_url= pyth_feed::get_rwa_icon(asset_name);
+
+        let new_seed  = utf8(b"");
         new_seed.append(fungible_asset::symbol(in_meta));
-        new_seed.append(name);
+        new_seed.append(asset_name);
 
         let obj_seed = *new_seed.bytes();
         let control_signer = & get_signer();
         let conf = &create_named_object( control_signer,obj_seed);
-        primary_fungible_store::create_primary_store_enabled_fungible_asset(conf,none<u128>(),name,symbol,8,icon_url,utf8(Project_url));
+        primary_fungible_store::create_primary_store_enabled_fungible_asset(conf,none<u128>(),asset_name,asset_name,8,icon_url,utf8(Project_url));
         let out_meta = object_from_constructor_ref<Metadata>(conf);
         let burn_ref = generate_burn_ref(conf);
         let transfer_ref = fungible_asset::generate_transfer_ref(conf);
@@ -260,7 +284,7 @@ module triplex::move_maker {
         let pool_signer = & generate_signer(conf);
 
         let new_pair_pool = Pair_coin{
-            coin_name:name,
+            coin_name:asset_name,
             pair_object:out_meta,
             tpxusd:get_fungible_store_of_tpxusdt(pool_signer),
             price_feed_addrss,
@@ -276,27 +300,39 @@ module triplex::move_maker {
         borrow_pool.supoort_asset.add(price_feed_addrss,new_pair_pool);
     }
 
-    fun init_module(caller:&signer){
-        let second_conf = &create_named_object(caller,SEED);
+     fun init_module(caller:&signer){
+        let second_conf = &create_named_object(&get_signer(),SEED);
         move_to(&generate_signer(second_conf),ALL{
             pool_tree:smart_table::new()
         });
     }
+    #[test_only]
+    public fun call_move_maker_init(caller:&signer){
+        init_module(caller);
+    }
 
     #[test(caller=@triplex,user=@0x123)]
-    fun test_rwa(caller:&signer,user:&signer) acquires ALL, Pool {
+    fun test_rwa(caller:&signer,user:&signer){
         ready_everythin(caller);
         let (apt_obj,_)= deploy(address_of(caller));
         primary_fungible_store::transfer(caller,apt_obj,address_of(user),100000000000);
-        dao_add_mortgage_assset(apt_obj,x"44a93dddd8effa54ea51076c4e851b6cbbfd938e82eb90197de38fe8876bb66e");
-        dao_add_rwa_asset(apt_obj,utf8(b"BTC"),utf8(b"BTC"),utf8(b"https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/Bitcoin.svg/300px-Bitcoin.svg.png"),x"f9c0172ba10dfa4d19088d94f5bf61d3b54d5bd7483a322a982e1373ee8ea31b");
+        //dao_add_mortgage_assset(apt_obj,x"44a93dddd8effa54ea51076c4e851b6cbbfd938e82eb90197de38fe8876bb66e");
+        //dao_add_rwa_asset(apt_obj,utf8(b"BTC"),utf8(b"BTC"),utf8(b"https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/Bitcoin.svg/300px-Bitcoin.svg.png"),x"f9c0172ba10dfa4d19088d94f5bf61d3b54d5bd7483a322a982e1373ee8ea31b");
         //create_asset_FAFA(user,100000000,apt_obj,x"f9c0172ba10dfa4d19088d94f5bf61d3b54d5bd7483a322a982e1373ee8ea31b",)
+    }
+    #[test(caller=@triplex,user=@0x123)]
+    fun test_dao_addd(caller:&signer,user:&signer){
+        ready_everythin(caller);
+        let (apt_obj,_)= deploy(address_of(caller));
+        primary_fungible_store::transfer(caller,apt_obj,address_of(user),100000000000);
+
     }
 
     #[test_only]
     public fun ready_everythin(caller:&signer){
         package_manager::call_package_init(caller);
         init_module(caller);
+        call_pyth(caller);
         call_vault_init(caller);
         create_account_for_test(address_of(caller));
     }

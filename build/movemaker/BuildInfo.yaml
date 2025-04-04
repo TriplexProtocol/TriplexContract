@@ -12,11 +12,11 @@ compiled_package_info:
     deployer: b31e712b26fd295357355f6845e77c888298636609e93bc9b05f0f604049f434
     pyth: 7e783b349d3e89cf5931af376ebeadbfab855b3fa239b7ada8f5a92fbea6b387
     std: "0000000000000000000000000000000000000000000000000000000000000001"
-    triplex: ea1b7b3507181cd3b4b55d36ff1ababa4b42f3bf939da340ba054c82e90fb39b
+    triplex: 23a3182dc60eb04812b897ad52ea7442677bea342fcdd94977d0028494748811
     vm: "0000000000000000000000000000000000000000000000000000000000000000"
     vm_reserved: "0000000000000000000000000000000000000000000000000000000000000000"
     wormhole: 5bc11445584a763c1fa7ed39081f1b920954da14e04b32440cba863d03e19625
-  source_digest: 57746EDCB9FDC915D707DF9DF5F0C1E82BE55EFDEB8F22612AE8941F521F88BC
+  source_digest: 1A54B743CA9A5498DF9BDC90902D70EE699ABE86BE72D236943104E8EE45F097
   build_flags:
     dev_mode: false
     test_mode: false
@@ -27,7 +27,8 @@ compiled_package_info:
     full_model_generation: true
     install_dir: ~
     force_recompilation: false
-    additional_named_addresses: {}
+    additional_named_addresses:
+      triplex: 23a3182dc60eb04812b897ad52ea7442677bea342fcdd94977d0028494748811
     fetch_deps_only: false
     skip_fetch_latest_git_deps: false
     compiler_config:

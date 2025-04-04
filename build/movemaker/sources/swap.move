@@ -386,8 +386,7 @@ module triplex::swap {
         let control_signer = &get_control_address();
         create_object_address(control_signer,SWAP_SEED)
     }
-
-    fun init_module(caller:&signer){
+   fun init_module(caller:&signer){
         let control_signer = &get_signer();
         let conf = &create_named_object(control_signer,SWAP_SEED);
         let obj_extend = generate_extend_ref(conf);
@@ -397,6 +396,9 @@ module triplex::swap {
             pool_table:smart_table::new()
         });
     }
+
+
+
     #[view]
     public fun get_LP_metadata(pool_1:Object<Metadata>,pool_2:Object<Metadata>):Object<Metadata> acquires Pool_tree, Pool {
         let pool_seed= get_pool_seed(pool_1,pool_2);
