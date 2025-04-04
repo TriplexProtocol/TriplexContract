@@ -8,6 +8,8 @@ module triplex::package_manager {
     friend triplex::dao;
     friend triplex::vault;
     friend  triplex::swap;
+    friend triplex::Big_pool;
+
 
 
 
