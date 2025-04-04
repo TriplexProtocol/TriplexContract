@@ -30,7 +30,7 @@ module triplex::move_maker {
         object_address, ConstructorRef, address_from_constructor_ref
     };
     use aptos_framework::primary_fungible_store;
-    use triplex::Big_pool::deposite_to_big_pool;
+    use triplex::Big_pool::{deposite_to_big_pool, get_big_pool_address};
     use triplex::pyth_feed;
     use triplex::pyth_feed::get_feed_id;
     use pyth::price::Price;
@@ -175,7 +175,7 @@ module triplex::move_maker {
 
     //RWA
     fun create_asset(caller:&signer,in_FA:FungibleAsset,pyth_price_update: vector<vector<u8>>,asset_name:String) acquires ALL, Pool {
-        let borrow = borrow_global<ALL>(create_object_address(&@triplex,SEED));
+        let borrow = borrow_global<ALL>(create_object_address(&get_control_address(),SEED));
         let in_FA_meta = fungible_asset::metadata_from_asset(&in_FA);
         assert!(borrow.pool_tree.contains(in_FA_meta) == true , not_implemented(E_not_extist));
         let pool_address=borrow.pool_tree.borrow(in_FA_meta);
@@ -209,8 +209,9 @@ module triplex::move_maker {
 
 
         //according the price to make the same value output
-        deposite_to_big_pool(in_FA);
+        //deposite_to_big_pool(in_FA);
         make_some_fa(caller ,pair_coin_details,pair_coin_details.pair_object,price_in_aptos_coin);
+        fungible_asset::deposit(pool.pool,in_FA);
 
 
 
@@ -221,7 +222,9 @@ module triplex::move_maker {
         let control_address =  get_control_address();
 
         let fa=pledge_to_get_tpxusd(amount);
-        deposit(pair.tpxusd,fa);
+        let big_pool_address = get_big_pool_address();
+        primary_fungible_store::deposit(big_pool_address,fa);
+        //deposit(pair.tpxusd,fa);
 
         //mint fa to control object address
         primary_fungible_store::mint(&pair.control.mint_ref, control_address,amount);
@@ -259,7 +262,7 @@ module triplex::move_maker {
     // }
 
     public(friend) fun dao_add_rwa_asset(in_meta:Object<Metadata>,asset_name:String) acquires ALL, Pool {
-        let borrow = borrow_global_mut<ALL>(create_object_address(&@triplex,SEED));
+        let borrow = borrow_global_mut<ALL>(create_object_address(&get_control_address(),SEED));
         assert!(borrow.pool_tree.contains(in_meta)== true , not_implemented(E_not_extist));
         let market_address = *borrow.pool_tree.borrow(in_meta);
         let borrow_pool = borrow_global_mut<Pool>(market_address);
@@ -356,4 +359,6 @@ module triplex::move_maker {
             mint
         });
     }
+
+
 }

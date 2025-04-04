@@ -202,7 +202,7 @@ module triplex::dao {
         ready_everything(caller);
         let apt=deploy_apt(aptos_framework,caller);
         directly_add_mortgage(caller,apt);
-        pledge_to_get_tpxusd_FA(caller,apt,100000000000,10000000000,);
+        //pledge_to_get_tpxusd_FA(caller,apt,100000000000,10000000000,);
     }
     #[test_only]
     public fun ready_everything(caller:&signer){
