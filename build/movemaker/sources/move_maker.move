@@ -1,14 +1,13 @@
 module triplex::move_maker {
 
     use std::error::not_implemented;
-    use std::option::{Option, none, };
+    use std::option::{none, };
     use std::signer::address_of;
-    use std::string;
+
 
     use std::string::{String, utf8};
-    use std::vector;
-    use aptos_std::math128;
     use aptos_std::math64;
+
     use aptos_std::math64::pow;
 
     use aptos_std::smart_table;
@@ -16,23 +15,25 @@ module triplex::move_maker {
 
     use aptos_framework::coin;
     use aptos_framework::coin::{withdraw, coin_to_fungible_asset};
+    use aptos_framework::event::emit;
     use aptos_framework::fungible_asset;
     use pyth::pyth;
 
     use pyth::price_identifier;
     use aptos_framework::fungible_asset::{FungibleStore, Metadata, MintRef, BurnRef, TransferRef, FungibleAsset,
-        generate_burn_ref, generate_mint_ref, create_store, deposit
+        generate_burn_ref, generate_mint_ref, create_store,
     };
-    use aptos_framework::object;
 
-    use aptos_framework::object::{Object, create_object_address, ExtendRef, generate_signer_for_extending,
-        create_named_object, generate_signer, generate_extend_ref, generate_transfer_ref, object_from_constructor_ref,
-        object_address, ConstructorRef, address_from_constructor_ref
+
+    use aptos_framework::object::{Object, create_object_address, ExtendRef,
+        create_named_object, generate_signer, generate_extend_ref, object_from_constructor_ref,
+
     };
     use aptos_framework::primary_fungible_store;
-    use triplex::Big_pool::{deposite_to_big_pool, get_big_pool_address};
+    use aptos_framework::timestamp;
+    use triplex::Big_pool::{deposite_to_big_pool, get_big_pool_address, withdraw_form_pool};
     use triplex::pyth_feed;
-    use triplex::pyth_feed::get_feed_id;
+    use triplex::pyth_feed::{get_feed_id, get_rwa_feed_id};
     use pyth::price::Price;
     use triplex::vault::{get_fungible_store_of_tpxusdt, pledge_to_get_tpxusd, create_vault, a };
     use triplex::package_manager::{get_signer, get_control_address};
@@ -87,6 +88,16 @@ module triplex::move_maker {
         extend_ref:ExtendRef
     }
 
+    struct USER_RWA has key,store{
+        rwa_asset:SmartTable<u64, RWA_make>,
+        all_time_rwa:vector<u64>
+    }
+    struct RWA_make has key,store,copy{
+        time:u64,
+        rwa_type:String,
+        rwa_obj:Object<Metadata>
+    }
+
     const SEED :vector<u8> = b"Seed";
     const Control_Seed :vector<u8> = b"control seed";
     const APR :u64 =900;
@@ -105,6 +116,38 @@ module triplex::move_maker {
     const E_already_exist :u64 =4 ;
     //not admin
     const E_not_admin:u64 =5;
+
+    fun ensure_user_have_rwa_struct(caller:&signer){
+        let e=exists<USER_RWA>(address_of(caller));
+        if(!e){
+            let new = USER_RWA{
+                rwa_asset:smart_table::new<u64,RWA_make>(),
+                all_time_rwa:vector[]
+            };
+            move_to(caller,new);
+        }
+    }
+    fun add_rwa_make_to_user_address(caller:&signer,rwa_obj:Object<Metadata>) acquires USER_RWA {
+        let now_time = timestamp::now_seconds();
+        let new_rwa_make = RWA_make{
+            time:now_time,
+            rwa_type:fungible_asset::name(rwa_obj),
+            rwa_obj
+        };
+        let borrow = borrow_global_mut<USER_RWA>(address_of(caller));
+        borrow.rwa_asset.add(now_time,new_rwa_make);
+        borrow.all_time_rwa.push_back(now_time);
+    }
+    #[view]
+    public fun get_user_all_record(user:address):vector<u64> acquires USER_RWA {
+        let borrow = borrow_global<USER_RWA>(user);
+        borrow.all_time_rwa
+    }
+    #[view]
+    public fun get_user_specfic_record(user:address,time:u64):RWA_make acquires USER_RWA {
+        let borrow = borrow_global<USER_RWA>(user);
+        *borrow.rwa_asset.borrow(time)
+    }
 
     // #[view]
     // fun get_number(in_obj:Object<Metadata>,out_obj:Object<Metadata>,in_amount:u64,out_amount:u64):(u64,u64,u64,u64,u64,u64,u64,u64,u64,u64) acquires ALL, Pool {
@@ -133,34 +176,27 @@ module triplex::move_maker {
         price
     }
 
-    inline fun get_pyth_price (in:vector<u8>,in_obj:Object<Metadata>):u64{
+    inline fun get_pyth_price (in:vector<u8>):u64{
 
         let coin_usd_price_id = price_identifier::from_byte_vec(in);
 
         let price =pyth::get_price(coin_usd_price_id);
 
         let price_positive = i64::get_magnitude_if_positive(&price::get_price(&price)); // This will fail if the price is negative
-        let expo_magnitude = i64::get_magnitude_if_negative(&price::get_expo(&price)); // This will fail if the exponent is positive
-
-        let decimals = fungible_asset::decimals(in_obj);
-        let octas = pow(10, (decimals as u64));
-
-
-        let price_in_aptos_coin =  (octas * pow(10, expo_magnitude)) / price_positive;
-        price_in_aptos_coin
+        price_positive
     }
 
     //CoFA
-    public entry fun create_asset_COFA<CoinA>(caller:&signer,amount:u64,pyth_price_update: vector<vector<u8>>,asset_name:String) acquires ALL, Pool {
+    public entry fun create_asset_COFA<CoinA>(caller:&signer,amount:u64,pyth_price_update: vector<vector<u8>>,rwa_pyth_price_update: vector<vector<u8>>,asset_name:String) acquires ALL, Pool, USER_RWA {
         let coin = coin::withdraw<CoinA>(caller,amount);
         let fa=  coin_to_fungible_asset(coin);
-        return create_asset(caller,fa,pyth_price_update,asset_name)
+        return create_asset(caller,fa,pyth_price_update,rwa_pyth_price_update,asset_name)
     }
 
     //FAFA
-    public entry fun create_asset_FAFA(caller:&signer,amount:u64,in_asset:Object<Metadata>,pyth_price_update: vector<vector<u8>>,asset_name:String) acquires ALL, Pool {
+    public entry fun create_asset_FAFA(caller:&signer,amount:u64,in_asset:Object<Metadata>,pyth_price_update: vector<vector<u8>>,rwa_pyth_price_update: vector<vector<u8>>,asset_name:String) acquires ALL, Pool, USER_RWA {
         let in_fa = primary_fungible_store::withdraw(caller,in_asset,amount);
-        return create_asset(caller,in_fa,pyth_price_update,asset_name)
+        return create_asset(caller,in_fa,pyth_price_update,rwa_pyth_price_update,asset_name)
     }
 
     public entry fun demo_example(caller:&signer,amount:u64,in_asset:Object<Metadata>,name:String,symbol:String,icon:String){
@@ -174,7 +210,8 @@ module triplex::move_maker {
     }
 
     //RWA
-    fun create_asset(caller:&signer,in_FA:FungibleAsset,pyth_price_update: vector<vector<u8>>,asset_name:String) acquires ALL, Pool {
+    fun create_asset(caller:&signer,in_FA:FungibleAsset,pyth_price_update: vector<vector<u8>>,rwa_pyth_price_update: vector<vector<u8>>,asset_name:String) acquires ALL, Pool, USER_RWA {
+        ensure_user_have_rwa_struct(caller);
         let borrow = borrow_global<ALL>(create_object_address(&get_control_address(),SEED));
         let in_FA_meta = fungible_asset::metadata_from_asset(&in_FA);
         assert!(borrow.pool_tree.contains(in_FA_meta) == true , not_implemented(E_not_extist));
@@ -192,7 +229,7 @@ module triplex::move_maker {
 
         let pair_coin_details = pool.supoort_asset.borrow(price_feed);
 
-        let coin_price_identifier = pair_coin_details.price_feed_addrss;
+        let coin_price_identifier = get_feed_id(in_FA_meta);
         let coin_usd_price_id = price_identifier::from_byte_vec(coin_price_identifier);
 
         let price =pyth::get_price(coin_usd_price_id);
@@ -207,27 +244,42 @@ module triplex::move_maker {
 
         let price_in_aptos_coin =  (octas * pow(10, expo_magnitude)) / price_positive;
 
-
+        let in_fa_amount = fungible_asset::amount(&in_FA);
+        let price = math64::mul_div(price_positive,in_fa_amount,100000000);
         //according the price to make the same value output
         //deposite_to_big_pool(in_FA);
-        make_some_fa(caller ,pair_coin_details,pair_coin_details.pair_object,price_in_aptos_coin);
+        make_some_fa(caller ,pair_coin_details,pair_coin_details.pair_object,price,rwa_pyth_price_update,asset_name);
         fungible_asset::deposit(pool.pool,in_FA);
-
-
 
     }
 
     //use for mint new fa to contorl address, then transfer to user address
-    inline fun make_some_fa(caller:&signer,pair:&Pair_coin,out_meta:Object<Metadata>,amount:u64){
+    inline fun make_some_fa(caller:&signer,pair:&Pair_coin,out_meta:Object<Metadata>,amount:u64,rwa_pyth_price_update: vector<vector<u8>>,asset_name:String){
         let control_address =  get_control_address();
 
         let fa=pledge_to_get_tpxusd(amount);
-        let big_pool_address = get_big_pool_address();
-        primary_fungible_store::deposit(big_pool_address,fa);
+        // let big_pool_address = deposite_to_big_pool(fa);
+        deposite_to_big_pool(fa);
+        //primary_fungible_store::deposit(big_pool_address,fa);
         //deposit(pair.tpxusd,fa);
-
+        add_rwa_make_to_user_address(caller,pair.pair_object);
         //mint fa to control object address
-        primary_fungible_store::mint(&pair.control.mint_ref, control_address,amount);
+
+        let pyth_fee=pyth::get_update_fee(&rwa_pyth_price_update);
+        let coins = withdraw(caller,pyth_fee);
+        pyth::update_price_feeds(rwa_pyth_price_update,coins);
+
+        let coin_price_identifier = get_rwa_feed_id (asset_name);
+        let coin_usd_price_id = price_identifier::from_byte_vec(coin_price_identifier);
+        let price =pyth::get_price(coin_usd_price_id);
+
+        let price_positive = i64::get_magnitude_if_positive(&price::get_price(&price));
+
+        let out_amount = math64::mul_div(price_positive,100000000,amount);
+
+        primary_fungible_store::mint(&pair.control.mint_ref, control_address,out_amount);
+
+
         //borrow from control object
         let control_signer = &get_signer();
         primary_fungible_store::transfer(control_signer,out_meta,address_of(caller),amount)
@@ -360,5 +412,33 @@ module triplex::move_maker {
         });
     }
 
+    public entry fun rwa_to_usd(caller:&signer,in_obj:Object<Metadata>,in_amount:u64,rwa_time:u64,pyth_price_update: vector<vector<u8>>) acquires USER_RWA, ALL, Pool {
+            let user_rwa = borrow_global<USER_RWA>(address_of(caller));
+            let rwa_details=user_rwa.rwa_asset.borrow(rwa_time);
+            let rwa_fa = primary_fungible_store::withdraw(caller,rwa_details.rwa_obj,in_amount);
+            let price_feed_id = pyth_feed::get_rwa_feed_id(rwa_details.rwa_type);
+            let pyth_fee=pyth::get_update_fee(&pyth_price_update);
+            let coins = withdraw(caller,pyth_fee);
+            pyth::update_price_feeds(pyth_price_update,coins);
 
+            let pyth_price =get_pyth_price(price_feed_id);
+
+            let out_amount = math64::mul_div(pyth_price,in_amount,100000000);
+
+            let fa = withdraw_form_pool(out_amount);
+
+            primary_fungible_store::deposit(address_of(caller),fa);
+
+            send_to_burn(rwa_fa,in_obj,price_feed_id);
+
+    }
+
+    fun send_to_burn(fa:FungibleAsset,in_meta:Object<Metadata>,feed_id:vector<u8>) acquires ALL, Pool {
+        let borrow = borrow_global<ALL>(create_object_address(&get_control_address(),SEED));
+        assert!(borrow.pool_tree.contains(in_meta)== true , not_implemented(E_not_extist));
+        let market_address = *borrow.pool_tree.borrow(in_meta);
+        let borrow_pool = borrow_global<Pool>(market_address);
+        let pair_coin=borrow_pool.supoort_asset.borrow(feed_id);
+        fungible_asset::burn(&pair_coin.control.burn_ref,fa);
+    }
 }

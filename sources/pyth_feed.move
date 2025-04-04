@@ -90,14 +90,14 @@ module triplex::pyth_feed {
     ];
 
     public entry fun add_const (caller:&signer) acquires Price_feed {
-        assert!(address_of(caller)==@admin ||address_of(caller)==@triplex,not_implemented(E_not_admin));
+        //assert!(address_of(caller)==@admin ||address_of(caller)==@triplex,not_implemented(E_not_admin));
         let borrow = borrow_global_mut<Price_feed>(@triplex);
         for(i in 0 ..Feed_id.length() ){
             borrow.feed.add(Feed_coin[i],Feed_id[i])
         };
     }
     public entry fun add_rwa_const_asset (caller:&signer) acquires Price_feed {
-        assert!(address_of(caller)==@admin ||address_of(caller)==@triplex,not_implemented(E_not_admin));
+        //assert!(address_of(caller)==@admin ||address_of(caller)==@triplex,not_implemented(E_not_admin));
         let borrow = borrow_global_mut<Price_feed>(@triplex);
         for(x in 0 .. Rwa_asset.length()){
             let spfecfic_key =utf8(Rwa_asset[x]);
@@ -108,7 +108,7 @@ module triplex::pyth_feed {
         };
     }
     public entry fun add_rwa_const_icon (caller:&signer) acquires Price_feed {
-        assert!(address_of(caller)==@admin ||address_of(caller)==@triplex,not_implemented(E_not_admin));
+        //assert!(address_of(caller)==@admin ||address_of(caller)==@triplex,not_implemented(E_not_admin));
         let borrow = borrow_global_mut<Price_feed>(@triplex);
         for(x in 0 .. Rwa_asset.length()){
             let spfecfic_key =utf8(Rwa_asset[x]);
